@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=Camera
+Comment=Take photos
+Exec=/usr/local/bin/p90-camera
+Icon=org.postmarketos.Megapixels
+Type=Application
+Terminal=false
+DBusActivatable=false
+Categories=GTK;Photography;Graphics;
+Keywords=camera;photo;
+X-Purism-FormFactor=Workstation;Mobile;
+X-Phosh-UsesFeedback=true
+StartupNotify=false

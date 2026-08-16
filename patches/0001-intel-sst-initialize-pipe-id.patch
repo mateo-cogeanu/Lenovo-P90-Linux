@@ -1,0 +1,44 @@
+From: P90 native Linux port
+Subject: [PATCH] ASoC: Intel: initialize effects pipe_id
+
+GCC 4.9 reports pipe_id as maybe-uninitialized under the driver's mandatory
+-Werror setting. Every valid path initializes it through sst_get_pipe_id() and
+checks that function's return value. Give it a harmless initial value so this
+historical source builds with the available Android GCC 4.9 toolchain.
+
+--- a/sound/soc/intel/effects.c
++++ b/sound/soc/intel/effects.c
+@@ -224,6 +224,6 @@ static int sst_effects_create(struct snd_card *card, struct snd_effect *effect)
+ {
+ 	int ret = 0;
+-	u8 pipe_id;
++	u8 pipe_id = 0;
+ 	struct ipc_effect_payload dsp_payload;
+ 	struct ipc_dsp_effects_info effects_info;
+ 	struct sst_data *sst;
+@@ -257,6 +257,6 @@ static int sst_effects_destroy(struct snd_card *card, struct snd_effect *effect)
+ {
+ 	int ret = 0;
+-	u8 pipe_id;
++	u8 pipe_id = 0;
+ 	struct ipc_effect_payload dsp_payload;
+ 	struct ipc_dsp_effects_info effects_info;
+ 	struct sst_data *sst;
+@@ -291,7 +291,7 @@ static int sst_effects_set_params(struct snd_card *card,
+ 						struct snd_effect_params *params)
+ {
+ 	int ret = 0;
+-	u8 pipe_id;
++	u8 pipe_id = 0;
+ 	u16 algo_id;
+ 	struct ipc_effect_payload dsp_payload;
+ 	struct sst_data *sst;
+@@ -325,7 +325,7 @@ static int sst_effects_get_params(struct snd_card *card,
+ 						struct snd_effect_params *params)
+ {
+ 	int ret = 0;
+-	u8 pipe_id;
++	u8 pipe_id = 0;
+ 	u16 algo_id;
+ 	struct ipc_effect_payload dsp_payload;
+ 	struct sst_data *sst;

@@ -1,0 +1,31 @@
+From: P90 native Linux port
+Subject: [PATCH] run-as payload: exec requested command without debug output
+
+The upstream demonstration always starts an interactive shell and builds the
+payload with DEBUG output. For byte-exact block reads, accept a command in argv,
+exec it after setresuid/setresgid and SELinux context setup, and omit DEBUG from
+the run-as module. With no command, retain the original interactive behavior.
+
+--- a/run-as.c
++++ b/run-as.c
+@@ -65,6 +65,11 @@ int main(int argc, const char **argv)
+ 		dlclose(selinux);
+ 	} else {
+ 		LOGV("no selinux?");
+ 	}
++
++	if (argc > 1) {
++		execv(argv[1], (char *const *)&argv[1]);
++		return 127;
++	}
+ 
+ 	system("/system/bin/sh -i");
+ 
+--- a/Android.mk
++++ b/Android.mk
+@@ -24,5 +24,4 @@ LOCAL_SRC_FILES := \
+ 	run-as.c
+ 
+-LOCAL_CFLAGS += -DDEBUG
+ LOCAL_LDFLAGS   += -llog
+ 

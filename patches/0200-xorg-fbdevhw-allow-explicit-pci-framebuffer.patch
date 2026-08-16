@@ -1,0 +1,32 @@
+--- a/hw/xfree86/fbdevhw/fbdevhw.c
++++ b/hw/xfree86/fbdevhw/fbdevhw.c
+@@ -307,6 +307,7 @@ static int
+ fbdev_open(int scrnIndex, const char *dev, char **namep)
+ {
+     struct fb_fix_screeninfo fix;
++    const Bool explicit_device = (dev != NULL);
+     int fd;
+ 
+     /* try argument (from XF86Config) first */
+@@ -337,13 +338,15 @@ fbdev_open(int scrnIndex, const char *dev, char **namep)
+         char *sysfs_path = NULL;
+         char *node = strrchr(dev, '/') + 1;
+ 
+-        if (asprintf(&sysfs_path, "/sys/class/graphics/%s", node) < 0 ||
+-            readlink(sysfs_path, buf, sizeof(buf) - 1) < 0 ||
+-            strstr(buf, "devices/pci")) {
+-            free(sysfs_path);
+-            close(fd);
+-            return -1;
++        if (!explicit_device) {
++            if (asprintf(&sysfs_path, "/sys/class/graphics/%s", node) < 0 ||
++                readlink(sysfs_path, buf, sizeof(buf) - 1) < 0 ||
++                strstr(buf, "devices/pci")) {
++                free(sysfs_path);
++                close(fd);
++                return -1;
++            }
++            free(sysfs_path);
+         }
+-        free(sysfs_path);
+     }

@@ -1,0 +1,4 @@
+#!/bin/sh
+message='The Intel AtomISP camera pipeline is detected, but native capture is not ready yet. Megapixels was stopped safely instead of programming unverified media links.'
+printf '%s\n' "$message" >>/var/log/megapixels.p90.log
+exec /usr/bin/gdbus call --session --dest org.freedesktop.Notifications --object-path /org/freedesktop/Notifications --method org.freedesktop.Notifications.Notify 'Camera' 0 'org.postmarketos.Megapixels' 'Camera hardware not ready' "$message" '[]' '{}' 10000
