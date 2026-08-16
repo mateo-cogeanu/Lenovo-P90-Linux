@@ -1,0 +1,9 @@
+From: P90 native Linux port
+Subject: [PATCH] uapi: restore omitted ipt_ttl match header
+
+Lenovo lists the lowercase matcher header in Kbuild but omitted it. Restore it
+verbatim from Linux stable tag v3.10.20:
+https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/include/uapi/linux/netfilter_ipv4/ipt_ttl.h?h=v3.10.20
+
+The added file is identical to that upstream source. Its SHA-256 is recorded in
+the generated artifact manifest after the build.

@@ -1,0 +1,17 @@
+diff --git a/hybris/gralloc/gralloc.c b/hybris/gralloc/gralloc.c
+index 17f40b2..0e71c8b 100644
+--- a/hybris/gralloc/gralloc.c
++++ b/hybris/gralloc/gralloc.c
+@@ -37,6 +37,12 @@
+ #include <dlfcn.h>
+ #include "logging.h"
+ 
++/* Android 4.x cutils implements native_handle_clone through libhybris-common,
++ * but its public native_handle.h predates the declaration. */
++#if ANDROID_VERSION_MAJOR == 4
++native_handle_t *native_handle_clone(const native_handle_t *handle);
++#endif
++
+ static int version = -1;
+ static hw_module_t *gralloc_hardware_module = NULL;
+ 

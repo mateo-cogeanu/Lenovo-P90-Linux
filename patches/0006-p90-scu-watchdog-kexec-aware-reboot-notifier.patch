@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: P90 native Linux port <local>
+Date: Mon, 3 Aug 2026 18:40:00 +0200
+Subject: [PATCH] watchdog: intel_scu: leave watchdog stopped for kexec
+
+The Lenovo P90/Moorefield production kernel re-arms the Intel SCU watchdog
+from the reboot notifier.  That is appropriate for ordinary restart, halt and
+poweroff paths, but it is hostile to kexec: userspace can stop the watchdog
+before calling kexec, then kernel_restart_prepare() invokes this notifier and
+starts the watchdog again immediately before machine_kexec().
+
+This patch is for rebuilt test kernels only.  It keeps ordinary reboot and
+poweroff behavior intact by default, while allowing the kexec path to preserve
+the already-stopped watchdog state when the command string is "kexec reboot".
+Upstream kernels pass this command string through kernel_restart_prepare().
+Lenovo's stock 3.10 tree often passes NULL, so this patch mainly protects
+second-stage/rebuilt kernels and documents the intended handoff behavior.
+
+---
+ drivers/watchdog/intel_scu_watchdog_evo.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/drivers/watchdog/intel_scu_watchdog_evo.c b/drivers/watchdog/intel_scu_watchdog_evo.c
+index 0000000..0000000 100644
+--- a/drivers/watchdog/intel_scu_watchdog_evo.c
++++ b/drivers/watchdog/intel_scu_watchdog_evo.c
+@@ -32,6 +32,7 @@
+ #include <linux/interrupt.h>
+ #include <linux/kernel_stat.h>
+ #include <linux/rpmsg.h>
++#include <linux/string.h>
+ #include <linux/nmi.h>
+ #include <asm/intel_scu_ipcutil.h>
+ #include <asm/intel_mid_rpmsg.h>
+@@ -503,6 +503,7 @@ static int reboot_notifier(struct notifier_block *this,
+ 			   unsigned long code,
+ 			   void *another_unused)
+ {
++	const char *cmd = another_unused;
+ 	int ret;
+ 
+ 	if (code == SYS_RESTART || code == SYS_HALT || code == SYS_POWER_OFF) {
+@@ -510,6 +511,16 @@ static int reboot_notifier(struct notifier_block *this,
+ 		pr_warn("Reboot notifier\n");
+ 
++		/*
++		 * kexec is not a firmware-mediated reboot.  If userspace has
++		 * explicitly stopped the SCU watchdog before entering kexec,
++		 * do not arm it again immediately before machine_kexec().
++		 */
++		if (code == SYS_RESTART && cmd && !strcmp(cmd, "kexec reboot")) {
++			pr_warn("leaving watchdog state unchanged for kexec\n");
++			return NOTIFY_DONE;
++		}
++
+ 		if (watchdog_set_appropriate_timeouts())
+ 			pr_crit("reboot notifier cant set time\n");
+ 
+ 		switch (code) {
+-- 
+2.0.0

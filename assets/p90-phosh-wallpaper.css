@@ -1,0 +1,16 @@
+/* Phosh 0.24's home is a separate layer-shell surface. Paint the wallpaper on
+ * that surface, then let its opaque overview and app-grid children reveal it. */
+phosh-home {
+  background-color: #263b68;
+  background-image: url("file:///usr/local/share/p90/p90-adwaita-portrait.png");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: cover;
+}
+
+.phosh-overview,
+phosh-app-grid {
+  background: transparent;
+  background-color: transparent;
+  background-image: none;
+}

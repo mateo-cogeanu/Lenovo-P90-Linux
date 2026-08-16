@@ -1,0 +1,265 @@
+#!/usr/bin/python3
+"""Portrait camera and gallery for the Lenovo P90 native Linux port."""
+
+import errno
+import glob
+import os
+import threading
+import time
+
+import gi
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import Gdk, GdkPixbuf, GLib, Gtk
+
+
+PHOTO_DIR = "/root/Pictures/P90-Camera"
+HOST_PHOTO_DIR = "/data/local/p90-debian/root/Pictures/P90-Camera"
+REQUEST_FIFO = "/run/p90-camera-request"
+CAPTURE_TIMEOUT = 35
+
+
+CSS = b"""
+window { background: #080a0d; color: white; }
+headerbar { background: #11151a; color: white; border: 0; }
+#viewfinder { background: #000; border-radius: 18px; }
+#status-pill { background: alpha(#11151a, 0.88); border-radius: 18px;
+               padding: 7px 14px; color: white; }
+#shutter { min-width: 76px; min-height: 76px; border-radius: 44px;
+           border: 7px solid white; background: #e9edf2; color: #111; }
+#shutter:active { background: #8ab4f8; }
+#shutter:disabled { background: #68717c; border-color: #aeb5bd; }
+.gallery-button { min-width: 52px; min-height: 52px; border-radius: 14px; }
+.dim-label { color: #aeb5bd; }
+"""
+
+
+class CameraWindow(Gtk.ApplicationWindow):
+    def __init__(self, application):
+        super().__init__(application=application, title="Camera")
+        self.set_default_size(480, 800)
+        self.set_size_request(320, 520)
+        self.photos = []
+        self.photo_index = -1
+        self.capturing = False
+        self.autotest = os.environ.get("P90_CAMERA_AUTOTEST") == "1"
+
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+
+        header = Gtk.HeaderBar(title="Camera", show_close_button=True)
+        header.set_subtitle("Lenovo P90")
+        self.set_titlebar(header)
+
+        self.count = Gtk.Label(label="0 photos")
+        self.count.get_style_context().add_class("dim-label")
+        header.pack_start(self.count)
+
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        root.set_border_width(10)
+        self.add(root)
+
+        overlay = Gtk.Overlay()
+        overlay.set_vexpand(True)
+        overlay.set_hexpand(True)
+        overlay.set_name("viewfinder")
+        root.pack_start(overlay, True, True, 0)
+
+        self.image = Gtk.Image.new_from_icon_name(
+            "camera-photo-symbolic", Gtk.IconSize.DIALOG
+        )
+        self.image.set_vexpand(True)
+        self.image.set_hexpand(True)
+        overlay.add(self.image)
+
+        status_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        status_box.set_halign(Gtk.Align.CENTER)
+        status_box.set_valign(Gtk.Align.START)
+        status_box.set_margin_top(12)
+        status_box.set_name("status-pill")
+        self.spinner = Gtk.Spinner()
+        status_box.pack_start(self.spinner, False, False, 0)
+        self.status = Gtk.Label(label="Camera ready")
+        status_box.pack_start(self.status, False, False, 0)
+        overlay.add_overlay(status_box)
+
+        controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18)
+        controls.set_halign(Gtk.Align.CENTER)
+        controls.set_valign(Gtk.Align.CENTER)
+        root.pack_end(controls, False, False, 2)
+
+        self.previous = Gtk.Button.new_from_icon_name(
+            "go-previous-symbolic", Gtk.IconSize.LARGE_TOOLBAR
+        )
+        self.previous.set_tooltip_text("Previous photo")
+        self.previous.get_style_context().add_class("gallery-button")
+        self.previous.connect("clicked", self.on_previous)
+        controls.pack_start(self.previous, False, False, 0)
+
+        self.capture = Gtk.Button.new_from_icon_name(
+            "camera-photo-symbolic", Gtk.IconSize.LARGE_TOOLBAR
+        )
+        self.capture.set_name("shutter")
+        self.capture.set_tooltip_text("Take photo")
+        self.capture.connect("clicked", self.on_capture)
+        controls.pack_start(self.capture, False, False, 0)
+
+        self.next = Gtk.Button.new_from_icon_name(
+            "go-next-symbolic", Gtk.IconSize.LARGE_TOOLBAR
+        )
+        self.next.set_tooltip_text("Next photo")
+        self.next.get_style_context().add_class("gallery-button")
+        self.next.connect("clicked", self.on_next)
+        controls.pack_start(self.next, False, False, 0)
+
+        self.filename = Gtk.Label(label="Photos are saved in Pictures/P90-Camera")
+        self.filename.set_ellipsize(3)
+        self.filename.get_style_context().add_class("dim-label")
+        root.pack_end(self.filename, False, False, 0)
+
+        os.makedirs(PHOTO_DIR, exist_ok=True)
+        self.reload_photos(show_latest=True)
+        if self.autotest:
+            GLib.timeout_add(1000, self.start_autotest)
+
+    def reload_photos(self, show_latest=False):
+        self.photos = sorted(glob.glob(os.path.join(PHOTO_DIR, "*.jpg")))
+        amount = len(self.photos)
+        self.count.set_text(f"{amount} photo" + ("" if amount == 1 else "s"))
+        if not self.photos:
+            self.photo_index = -1
+            self.previous.set_sensitive(False)
+            self.next.set_sensitive(False)
+            return
+        if show_latest or self.photo_index < 0:
+            self.photo_index = amount - 1
+        self.photo_index = min(self.photo_index, amount - 1)
+        self.show_photo(self.photos[self.photo_index])
+
+    def show_photo(self, path):
+        try:
+            width = max(self.image.get_allocated_width() - 8, 300)
+            height = max(self.image.get_allocated_height() - 8, 420)
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, width, height, True)
+            self.image.set_from_pixbuf(pixbuf)
+            self.filename.set_text(os.path.basename(path))
+            self.previous.set_sensitive(self.photo_index > 0)
+            self.next.set_sensitive(self.photo_index < len(self.photos) - 1)
+        except GLib.Error as error:
+            self.set_status(f"Could not display photo: {error.message}", False)
+
+    def set_status(self, text, busy=None):
+        self.status.set_text(text)
+        if busy is True:
+            self.spinner.start()
+            self.spinner.show()
+        elif busy is False:
+            self.spinner.stop()
+            self.spinner.hide()
+        return GLib.SOURCE_REMOVE
+
+    def on_previous(self, _button):
+        if self.photo_index > 0 and not self.capturing:
+            self.photo_index -= 1
+            self.show_photo(self.photos[self.photo_index])
+
+    def on_next(self, _button):
+        if self.photo_index + 1 < len(self.photos) and not self.capturing:
+            self.photo_index += 1
+            self.show_photo(self.photos[self.photo_index])
+
+    def on_capture(self, _button):
+        if self.capturing:
+            return
+        self.capturing = True
+        self.capture.set_sensitive(False)
+        self.previous.set_sensitive(False)
+        self.next.set_sensitive(False)
+        self.set_status("Starting camera…", True)
+        threading.Thread(target=self.capture_worker, daemon=True).start()
+
+    def capture_worker(self):
+        unique = f"{time.time_ns()}-{os.getpid()}"
+        local_path = os.path.join(PHOTO_DIR, f"P90-{unique}.jpg")
+        host_path = os.path.join(HOST_PHOTO_DIR, os.path.basename(local_path))
+        result_path = local_path + ".result"
+        try:
+            if not os.path.exists(REQUEST_FIFO):
+                raise RuntimeError("Camera service is not running")
+            try:
+                os.unlink(result_path)
+            except FileNotFoundError:
+                pass
+
+            try:
+                request_fd = os.open(REQUEST_FIFO, os.O_WRONLY | os.O_NONBLOCK)
+            except OSError as error:
+                if error.errno == errno.ENXIO:
+                    raise RuntimeError("Camera service is unavailable") from error
+                raise
+            with os.fdopen(request_fd, "w", encoding="ascii") as request:
+                request.write(host_path + "\n")
+
+            started = time.monotonic()
+            last_second = -1
+            while not os.path.exists(result_path):
+                elapsed = int(time.monotonic() - started)
+                if elapsed >= CAPTURE_TIMEOUT:
+                    raise RuntimeError("Camera timed out—tap the shutter to retry")
+                if elapsed != last_second:
+                    last_second = elapsed
+                    GLib.idle_add(self.set_status, f"Taking photo… {elapsed + 1}s", True)
+                time.sleep(0.1)
+
+            with open(result_path, encoding="ascii") as result:
+                code = int(result.readline().strip())
+            os.unlink(result_path)
+            if code != 0:
+                raise RuntimeError(f"Camera hardware returned error {code}")
+            if not os.path.exists(local_path) or os.path.getsize(local_path) < 1024:
+                raise RuntimeError("Camera returned an empty photo")
+            GLib.idle_add(self.capture_done, local_path, None)
+        except (OSError, RuntimeError, ValueError) as error:
+            GLib.idle_add(self.capture_done, None, str(error))
+
+    def capture_done(self, path, error):
+        self.capturing = False
+        self.capture.set_sensitive(True)
+        if error:
+            self.set_status(error, False)
+            self.reload_photos()
+            if self.autotest:
+                print(f"camera-autotest-error={error}", flush=True)
+                GLib.timeout_add(500, self.get_application().quit)
+            return GLib.SOURCE_REMOVE
+
+        self.reload_photos(show_latest=True)
+        self.set_status("Photo saved", False)
+        if self.autotest:
+            print(f"camera-autotest-photo={path}", flush=True)
+            GLib.timeout_add(1000, self.get_application().quit)
+        return GLib.SOURCE_REMOVE
+
+    def start_autotest(self):
+        self.on_capture(self.capture)
+        return GLib.SOURCE_REMOVE
+
+
+class CameraApplication(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="org.p90.NativeCamera")
+
+    def do_activate(self):
+        window = self.props.active_window or CameraWindow(self)
+        window.show_all()
+        window.spinner.hide()
+        window.present()
+
+
+raise SystemExit(CameraApplication().run(None))
